@@ -1,0 +1,48 @@
+<policies>
+    <inbound>
+        <base />
+        <cache-lookup-value key="@("bearerToken")" variable-name="bearerToken" />
+        <choose>
+            <when condition="@(!context.Variables.ContainsKey("bearerToken"))">
+                <send-request ignore-error="true" timeout="20" response-variable-name="accessTokenResult" mode="new">
+                    <set-url>{{authorizationServer}}</set-url>
+                    <set-method>POST</set-method>
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/x-www-form-urlencoded</value>
+                    </set-header>
+                    <set-body>@{
+              return "client_id={{clientId}}&scope={{scope}}&client_secret={{clientSecret}}&grant_type=client_credentials";
+                    }</set-body>
+                </send-request>
+                <set-variable name="accessToken" value="@(((IResponse)context.Variables["accessTokenResult"]).Body.As<JObject>())" />
+                <set-variable name="bearerToken" value="@((string)((JObject)context.Variables["accessToken"])["access_token"])" />
+                <set-variable name="tokenDurationSeconds" value="@((int)((JObject)context.Variables["accessToken"])["expires_in"])" />
+                <cache-store-value key="bearerToken" value="@((string)context.Variables["bearerToken"])" duration="@((int)context.Variables["tokenDurationSeconds"])" />
+            </when>
+        </choose>
+        <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["bearerToken"])</value>
+        </set-header>
+        <!--  Don't expose APIM subscription key to the backend. -->
+        <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+        <validate-client-certificate validate-revocation="false" validate-trust="false" validate-not-before="true" validate-not-after="true" ignore-error="false">
+            <identities>
+                <identity subject="{Client Certificate Subject Line}" />
+            </identities>
+        </validate-client-certificate>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <choose>
+            <when condition="@(context.Response.StatusCode == 401 || context.Response.StatusCode == 403)">
+                <cache-remove-value key="bearerToken" />
+            </when>
+        </choose>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
